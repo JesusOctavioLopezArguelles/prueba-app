@@ -4,6 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <title>SPC Cantera — Ingeniería Roboctyka del Sur</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#2d5a22" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
   <style>
@@ -344,11 +348,11 @@
     if (CapCamera) {
       try {
         const photo = await CapCamera.getPhoto({
-          quality: 70,
+          quality: 50,
           allowEditing: false,
           resultType: 'dataUrl', // CameraResultType.DataUrl
           source: 'PROMPT',      // CameraSource.Prompt -> deja elegir Cámara o Galería
-          width: 1280
+          width: 800
         });
         setPhotoPreview(photo.dataUrl);
       } catch (e) {
@@ -367,10 +371,33 @@
     reader.readAsDataURL(file);
   }
   function setPhotoPreview(dataUrl) {
-    currentPhotoBase64 = dataUrl;
-    document.getElementById('photoPreview').src = dataUrl;
-    document.getElementById('photoPreviewWrap').style.display = 'block';
-    document.getElementById('photoBtnText').textContent = 'Cambiar Foto';
+    compressImage(dataUrl, 700, 0.5).then((compressed) => {
+      currentPhotoBase64 = compressed;
+      document.getElementById('photoPreview').src = compressed;
+      document.getElementById('photoPreviewWrap').style.display = 'block';
+      document.getElementById('photoBtnText').textContent = 'Cambiar Foto';
+    }).catch(() => {
+      // Si por alguna razón falla la compresión, se usa la foto original
+      currentPhotoBase64 = dataUrl;
+      document.getElementById('photoPreview').src = dataUrl;
+      document.getElementById('photoPreviewWrap').style.display = 'block';
+      document.getElementById('photoBtnText').textContent = 'Cambiar Foto';
+    });
+  }
+  function compressImage(dataUrl, maxWidth, quality) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.width);
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
   }
   function removePhoto() {
     currentPhotoBase64 = null;
@@ -381,7 +408,14 @@
 
   const STORAGE_KEY = 'spc_cantera_v1';
   function loadRecords() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; } }
-  function saveRecords(r) { localStorage.setItem(STORAGE_KEY, JSON.stringify(r)); }
+  function saveRecords(r) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(r));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
 
   (function() {
     const t = new Date();
@@ -490,7 +524,24 @@
       photo: currentPhotoBase64 || null,
       savedAt: new Date().toLocaleTimeString('es-MX', { hour:'2-digit', minute:'2-digit' })
     };
-    const records = loadRecords(); records.unshift(record); saveRecords(records);
+    const records = loadRecords(); records.unshift(record);
+    const saved = saveRecords(records);
+    if (!saved) {
+      records.shift(); // revertir
+      if (record.photo) {
+        // Reintenta sin la foto, que normalmente es la causa del problema de espacio
+        const recordSinFoto = { ...record, photo: null };
+        records.unshift(recordSinFoto);
+        if (saveRecords(records)) {
+          alert('El espacio de almacenamiento del navegador está lleno.\n\nEl registro se guardó SIN la foto. Para poder guardar fotos de nuevo, borra registros antiguos (botón "Limpiar" o elimínalos uno por uno) y vuelve a intentar.');
+          showToastMsg('Registro guardado (sin foto, sin espacio)'); resetForm(); renderRecords();
+          return;
+        }
+        records.shift();
+      }
+      alert('No se pudo guardar el registro: el almacenamiento del navegador está lleno.\n\nBorra registros antiguos (botón "Limpiar") y vuelve a intentar.');
+      return;
+    }
     showToastMsg('Registro guardado con éxito'); resetForm(); renderRecords();
   });
   function resetForm() {
@@ -595,6 +646,9 @@
     toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
   }
   renderRecords();
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(()=>{}));
+  }
 </script>
 </body>
 </html>
